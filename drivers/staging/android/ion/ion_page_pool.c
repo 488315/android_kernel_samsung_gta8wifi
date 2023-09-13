@@ -25,6 +25,13 @@
 
 #include "ion.h"
 
+/*
+ * We avoid atomic_long_t to minimize cache flushes at the cost of possible
+ * race which would result in a small accounting inaccuracy that we can
+ * tolerate.
+ */
+static long nr_total_pages;
+
 static void *ion_page_pool_alloc_pages(struct ion_page_pool *pool)
 {
 	struct page *page = alloc_pages(pool->gfp_mask, pool->order);
@@ -50,6 +57,10 @@ static int ion_page_pool_add(struct ion_page_pool *pool, struct page *page)
 		list_add_tail(&page->lru, &pool->low_items);
 		pool->low_count++;
 	}
+
+	nr_total_pages += 1 << pool->order;
+	mod_node_page_state(page_pgdat(page), NR_KERNEL_MISC_RECLAIMABLE,
+							1 << pool->order);
 	mutex_unlock(&pool->mutex);
 	return 0;
 }
@@ -69,10 +80,13 @@ static struct page *ion_page_pool_remove(struct ion_page_pool *pool, bool high)
 	}
 
 	list_del(&page->lru);
+	nr_total_pages -= 1 << pool->order;
+	mod_node_page_state(page_pgdat(page), NR_KERNEL_MISC_RECLAIMABLE,
+							-(1 << pool->order));
 	return page;
 }
 
-struct page *ion_page_pool_alloc(struct ion_page_pool *pool)
+struct page *ion_page_pool_alloc(struct ion_page_pool *pool, bool *from_pool)
 {
 	struct page *page = NULL;
 
@@ -85,8 +99,12 @@ struct page *ion_page_pool_alloc(struct ion_page_pool *pool)
 		page = ion_page_pool_remove(pool, false);
 	mutex_unlock(&pool->mutex);
 
-	if (!page)
+	if (!page) {
 		page = ion_page_pool_alloc_pages(pool);
+		*from_pool = false;
+	} else {
+		*from_pool = true;
+	}
 
 	return page;
 }
@@ -111,6 +129,18 @@ static int ion_page_pool_total(struct ion_page_pool *pool, bool high)
 
 	return count << pool->order;
 }
+
+int ion_page_pool_nr_pages(struct ion_page_pool *pool)
+{
+	int ion_pool_total_pages;
+
+	mutex_lock(&pool->mutex);
+	ion_pool_total_pages = ion_page_pool_total(pool, true);
+	mutex_unlock(&pool->mutex);
+
+	return ion_pool_total_pages;
+}
+EXPORT_SYMBOL_GPL(ion_page_pool_nr_pages);
 
 int ion_page_pool_shrink(struct ion_page_pool *pool, gfp_t gfp_mask,
 			 int nr_to_scan)

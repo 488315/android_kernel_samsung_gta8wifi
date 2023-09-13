@@ -25,6 +25,9 @@
 #include <linux/pm.h>
 #include <linux/atomic.h>
 #include <linux/ratelimit.h>
+/*#Tab A8 code for SR-AX6300-01-128 by chenpengbo at 2021/08/23 start*/
+#include <linux/pinctrl/devinfo.h>
+/*#Tab A8 code for SR-AX6300-01-128 by chenpengbo at 2021/08/23 end*/
 #include <linux/uidgid.h>
 #include <linux/gfp.h>
 #include <asm/device.h>
@@ -730,6 +733,28 @@ struct device_dma_parameters {
 };
 
 /**
+ * struct device_connection - Device Connection Descriptor
+ * @endpoint: The names of the two devices connected together
+ * @id: Unique identifier for the connection
+ * @list: List head, private, for internal use only
+ */
+struct device_connection {
+	const char		*endpoint[2];
+	const char		*id;
+	struct list_head	list;
+};
+
+void *device_connection_find_match(struct device *dev, const char *con_id,
+				void *data,
+				void *(*match)(struct device_connection *con,
+					       int ep, void *data));
+
+struct device *device_connection_find(struct device *dev, const char *con_id);
+
+void device_connection_add(struct device_connection *con);
+void device_connection_remove(struct device_connection *con);
+
+/**
  * enum device_link_state - Device link states.
  * @DL_STATE_NONE: The presence of the drivers is not being tracked.
  * @DL_STATE_DORMANT: None of the supplier/consumer drivers is present.
@@ -1067,6 +1092,16 @@ static inline void device_disable_async_suspend(struct device *dev)
 static inline bool device_async_suspend_enabled(struct device *dev)
 {
 	return !!dev->power.async_suspend;
+}
+
+static inline bool device_pm_not_required(struct device *dev)
+{
+	return dev->power.no_pm;
+}
+
+static inline void device_set_pm_not_required(struct device *dev)
+{
+	dev->power.no_pm = true;
 }
 
 static inline void dev_pm_syscore_device(struct device *dev, bool val)

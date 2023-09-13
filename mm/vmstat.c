@@ -1046,11 +1046,15 @@ const char * const vmstat_text[] = {
 	"nr_mlock",
 	"nr_page_table_pages",
 	"nr_kernel_stack",
+#if IS_ENABLED(CONFIG_SHADOW_CALL_STACK)
+	"nr_shadow_call_stack_bytes",
+#endif
 	"nr_bounce",
 #if IS_ENABLED(CONFIG_ZSMALLOC)
 	"nr_zspages",
 #endif
 	"nr_free_cma",
+	"nr_high_atomic",
 
 	/* enum numa_stat_item counters */
 #ifdef CONFIG_NUMA
@@ -1068,12 +1072,19 @@ const char * const vmstat_text[] = {
 	"nr_inactive_file",
 	"nr_active_file",
 	"nr_unevictable",
+#ifdef CONFIG_PROTECT_LRU
+	"nr_protect_inactive_anon",
+	"nr_protect_active_anon",
+	"nr_protect_inactive_file",
+	"nr_protect_active_file",
+#endif
 	"nr_slab_reclaimable",
 	"nr_slab_unreclaimable",
 	"nr_isolated_anon",
 	"nr_isolated_file",
 	"workingset_refault",
 	"workingset_activate",
+	"workingset_restore",
 	"workingset_nodereclaim",
 	"nr_anon_pages",
 	"nr_mapped",
@@ -1090,7 +1101,7 @@ const char * const vmstat_text[] = {
 	"nr_vmscan_immediate_reclaim",
 	"nr_dirtied",
 	"nr_written",
-	"", /* nr_indirectly_reclaimable */
+	"nr_kernel_misc_reclaimable",
 
 	/* enum writeback_stat_item counters */
 	"nr_dirty_threshold",
@@ -1214,6 +1225,20 @@ const char * const vmstat_text[] = {
 #ifdef CONFIG_SWAP
 	"swap_ra",
 	"swap_ra_hit",
+#endif
+#ifdef CONFIG_SPECULATIVE_PAGE_FAULT
+	"speculative_pgfault",
+#endif
+#ifdef CONFIG_ZRAM_LRU_WRITEBACK
+	"sqzr_objcnt",
+	"sqzr_count",
+	"sqzr_read",
+	"sqzr_write",
+#endif
+#ifdef CONFIG_PROTECT_LRU
+	"ppgfree",
+	"ppgactivate",
+	"ppgdeactivate",
 #endif
 #endif /* CONFIG_VM_EVENTS_COUNTERS */
 };
@@ -1672,10 +1697,6 @@ static int vmstat_show(struct seq_file *m, void *arg)
 	unsigned long *l = arg;
 	unsigned long off = l - (unsigned long *)m->private;
 
-	/* Skip hidden vmstat items. */
-	if (*vmstat_text[off] == '\0')
-		return 0;
-
 	seq_puts(m, vmstat_text[off]);
 	seq_put_decimal_ull(m, " ", *l);
 	seq_putc(m, '\n');
@@ -1770,7 +1791,11 @@ int vmstat_refresh(struct ctl_table *table, int write,
 
 static void vmstat_update(struct work_struct *w)
 {
+#ifdef CONFIG_SPRD_CORE_CTL
+	if (refresh_cpu_vm_stats(true) && !cpu_isolated(smp_processor_id())) {
+#else
 	if (refresh_cpu_vm_stats(true)) {
+#endif
 		/*
 		 * Counters were updated so we expect more updates
 		 * to occur in the future. Keep on running the
@@ -1861,8 +1886,12 @@ static void vmstat_shepherd(struct work_struct *w)
 	/* Check processors whose vmstat worker threads have been disabled */
 	for_each_online_cpu(cpu) {
 		struct delayed_work *dw = &per_cpu(vmstat_work, cpu);
-
+#ifdef CONFIG_SPRD_CORE_CTL
+		if (!delayed_work_pending(dw) && need_update(cpu) &&
+		    !cpu_isolated(cpu))
+#else
 		if (!delayed_work_pending(dw) && need_update(cpu))
+#endif
 			queue_delayed_work_on(cpu, mm_percpu_wq, dw, 0);
 	}
 	put_online_cpus();
